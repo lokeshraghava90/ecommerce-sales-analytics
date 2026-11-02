@@ -3,302 +3,255 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, r2_score
+from sklearn.linear_model import LinearRegression
 
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
-    page_title="E-Commerce Sales Analytics",
+    page_title="E-Commerce Sales Analysis",
     page_icon="📊",
     layout="wide"
 )
 
 st.title("📊 E-Commerce Sales Analysis & Prediction")
-st.caption(
-    "Major Project | Data Science | SIMULATED SAMPLE DATA — "
-    "Not actual marketplace sales"
-)
+st.caption("Indian Retail Sales Dataset | 2023–2025")
 
-# Generate reproducible simulated data
+# ---------------- LOAD DATA ----------------
 @st.cache_data
-def create_data():
-    np.random.seed(42)
+def load_data():
+    df = pd.read_csv("india_retail_sales_dataset.csv")
 
-    dates = pd.date_range(
-        start="2025-10-01", periods=365, freq="D"
+    df["Order Date"] = pd.to_datetime(
+        df["Order Date"], errors="coerce"
     )
 
-    platform_names = [
-        "Amazon", "Flipkart", "Shopsy", "Meesho", "Myntra"
-    ]
+    df["Sales"] = pd.to_numeric(
+        df["Sales"], errors="coerce"
+    )
 
-    base_units = {
-        "Amazon": 150, "Flipkart": 130, "Shopsy": 70,
-        "Meesho": 90, "Myntra": 80
-    }
+    df["Quantity"] = pd.to_numeric(
+        df["Quantity"], errors="coerce"
+    )
 
-    average_price = {
-        "Amazon": 700, "Flipkart": 650, "Shopsy": 300,
-        "Meesho": 350, "Myntra": 900
-    }
+    df = df.dropna(subset=["Order Date", "Sales"])
 
-    rows = []
+    return df
 
-    for platform in platform_names:
-        for date in dates:
-            units = max(
-                0, int(np.random.normal(base_units[platform], 20))
-            )
+df = load_data()
 
-            revenue = round(
-                units * np.random.uniform(
-                    average_price[platform] * 0.8,
-                    average_price[platform] * 1.2
-                ), 2
-            )
+# ---------------- SIDEBAR FILTERS ----------------
+st.sidebar.header("🔎 Dashboard Filters")
 
-            rows.append({
-                "Date": date,
-                "Platform": platform,
-                "Units_Sold": units,
-                "Sales_Revenue": revenue,
-                "Category": np.random.choice([
-                    "Electronics", "Fashion", "Home", "Beauty"
-                ])
-            })
+years = sorted(df["Order Date"].dt.year.unique())
 
-    return pd.DataFrame(rows)
-
-df = create_data()
-
-# Sidebar filters
-st.sidebar.header("Dashboard Filters")
-
-platforms = sorted(df["Platform"].unique())
-categories = sorted(df["Category"].unique())
-
-selected_platforms = st.sidebar.multiselect(
-    "Select platforms",
-    platforms,
-    default=platforms
+selected_years = st.sidebar.multiselect(
+    "Select Year",
+    years,
+    default=years
 )
 
+categories = sorted(df["Category"].dropna().unique())
+
 selected_categories = st.sidebar.multiselect(
-    "Select categories",
+    "Select Category",
     categories,
     default=categories
 )
 
-min_date = df["Date"].min().date()
-max_date = df["Date"].max().date()
+regions = sorted(df["Region"].dropna().unique())
 
-date_range = st.sidebar.date_input(
-    "Select date range",
-    value=(min_date, max_date),
-    min_value=min_date,
-    max_value=max_date
+selected_regions = st.sidebar.multiselect(
+    "Select Region",
+    regions,
+    default=regions
 )
 
-if len(date_range) == 2:
-    start_date, end_date = date_range
-else:
-    start_date, end_date = min_date, max_date
-
-filtered = df[
-    df["Platform"].isin(selected_platforms)
+filtered_df = df[
+    df["Order Date"].dt.year.isin(selected_years)
     & df["Category"].isin(selected_categories)
-    & df["Date"].dt.date.between(start_date, end_date)
+    & df["Region"].isin(selected_regions)
 ]
 
-# KPI cards
-st.subheader("Key Performance Indicators")
+# ---------------- KPI METRICS ----------------
+total_sales = filtered_df["Sales"].sum()
+total_orders = filtered_df["Order ID"].nunique()
+average_sales = (
+    total_sales / total_orders if total_orders else 0
+)
+total_quantity = filtered_df["Quantity"].sum()
 
 col1, col2, col3, col4 = st.columns(4)
 
-col1.metric("Total Revenue", f"₹{filtered['Sales_Revenue'].sum():,.0f}")
-col2.metric("Units Sold", f"{filtered['Units_Sold'].sum():,}")
-col3.metric("Platforms", filtered["Platform"].nunique())
-col4.metric("Records", f"{len(filtered):,}")
+col1.metric("💰 Total Sales", f"₹{total_sales:,.2f}")
+col2.metric("🛒 Total Orders", f"{total_orders:,}")
+col3.metric("📦 Units Sold", f"{total_quantity:,.0f}")
+col4.metric("📈 Average Order Value", f"₹{average_sales:,.2f}")
 
-if filtered.empty:
-    st.warning("No data matches your filters. Change the selections.")
-    st.stop()
+st.divider()
 
-# Charts
-st.subheader("Platform Performance")
+# ---------------- MONTHLY SALES ----------------
+st.subheader("📅 Monthly Sales Trend")
 
-revenue_by_platform = (
-    filtered.groupby("Platform", as_index=False)["Sales_Revenue"]
+monthly = (
+    filtered_df.groupby(
+        filtered_df["Order Date"].dt.to_period("M")
+    )["Sales"]
     .sum()
+    .reset_index()
 )
 
-fig_revenue = px.bar(
-    revenue_by_platform,
-    x="Platform",
-    y="Sales_Revenue",
-    color="Platform",
-    title="Simulated Revenue by Platform",
-    labels={"Sales_Revenue": "Revenue (₹)"}
-)
-st.plotly_chart(fig_revenue, use_container_width=True)
+monthly["Month"] = monthly["Order Date"].dt.to_timestamp()
 
-units_by_platform = (
-    filtered.groupby("Platform", as_index=False)["Units_Sold"].sum()
+fig = px.line(
+    monthly,
+    x="Month",
+    y="Sales",
+    markers=True,
+    title="Monthly Sales"
 )
 
-fig_units = px.bar(
-    units_by_platform,
-    x="Platform",
-    y="Units_Sold",
-    color="Platform",
-    title="Simulated Units Sold by Platform"
-)
-st.plotly_chart(fig_units, use_container_width=True)
+st.plotly_chart(fig, use_container_width=True)
+
+# ---------------- CATEGORY ANALYSIS ----------------
+st.subheader("🛍️ Sales by Category")
 
 category_sales = (
-    filtered.groupby("Category", as_index=False)["Sales_Revenue"].sum()
+    filtered_df.groupby("Category")["Sales"]
+    .sum()
+    .reset_index()
 )
 
-fig_category = px.pie(
+fig = px.bar(
     category_sales,
-    names="Category",
-    values="Sales_Revenue",
-    title="Revenue Distribution by Category"
-)
-st.plotly_chart(fig_category, use_container_width=True)
-
-# Download filtered data
-st.subheader("Export Data")
-
-csv = filtered.to_csv(index=False).encode("utf-8")
-
-st.download_button(
-    "Download Filtered Data as CSV",
-    data=csv,
-    file_name="simulated_ecommerce_sales.csv",
-    mime="text/csv"
+    x="Category",
+    y="Sales",
+    color="Category",
+    title="Category-wise Sales"
 )
 
-# Prediction models
-st.subheader("Machine Learning Evaluation")
+st.plotly_chart(fig, use_container_width=True)
 
-ml_df = df.copy()
-ml_df["Day"] = ml_df["Date"].dt.day
-ml_df["Month"] = ml_df["Date"].dt.month
-ml_df["DayOfWeek"] = ml_df["Date"].dt.dayofweek
-ml_df["DayOfYear"] = ml_df["Date"].dt.dayofyear
+# ---------------- REGION ANALYSIS ----------------
+st.subheader("🌍 Sales by Region")
 
-ml_df = pd.get_dummies(
-    ml_df, columns=["Platform", "Category"], dtype=int
+region_sales = (
+    filtered_df.groupby("Region")["Sales"]
+    .sum()
+    .reset_index()
 )
 
-features = [
-    c for c in ml_df.columns
-    if c not in ["Date", "Units_Sold", "Sales_Revenue"]
-]
-
-split_date = pd.Timestamp("2026-07-01")
-train_mask = ml_df["Date"] < split_date
-test_mask = ml_df["Date"] >= split_date
-
-X_train = ml_df.loc[train_mask, features]
-X_test = ml_df.loc[test_mask, features]
-
-revenue_model = RandomForestRegressor(
-    n_estimators=50, max_depth=12, random_state=42, n_jobs=-1
-)
-units_model = RandomForestRegressor(
-    n_estimators=50, max_depth=12, random_state=42, n_jobs=-1
+fig = px.pie(
+    region_sales,
+    names="Region",
+    values="Sales",
+    title="Regional Sales Distribution"
 )
 
-revenue_model.fit(X_train, ml_df.loc[train_mask, "Sales_Revenue"])
-units_model.fit(X_train, ml_df.loc[train_mask, "Units_Sold"])
+st.plotly_chart(fig, use_container_width=True)
 
-rev_actual = ml_df.loc[test_mask, "Sales_Revenue"]
-rev_pred = revenue_model.predict(X_test)
-units_actual = ml_df.loc[test_mask, "Units_Sold"]
-units_pred = units_model.predict(X_test)
+# ---------------- PAYMENT ANALYSIS ----------------
+st.subheader("💳 Payment Mode Analysis")
 
-m1, m2 = st.columns(2)
-
-m1.metric(
-    "Revenue MAE",
-    f"₹{mean_absolute_error(rev_actual, rev_pred):,.2f}"
-)
-m1.metric("Revenue R²", f"{r2_score(rev_actual, rev_pred):.3f}")
-
-m2.metric(
-    "Units MAE",
-    f"{mean_absolute_error(units_actual, units_pred):.2f} units"
-)
-m2.metric("Units R²", f"{r2_score(units_actual, units_pred):.3f}")
-
-st.info(
-    "Model scores are measured on held-out simulated data. "
-    "They do not represent verified real-world marketplace accuracy."
+payment_sales = (
+    filtered_df.groupby("Payment Mode")["Sales"]
+    .sum()
+    .reset_index()
 )
 
-# 30-day predictions
-st.subheader("30-Day Simulated Predictions")
+fig = px.bar(
+    payment_sales,
+    x="Payment Mode",
+    y="Sales",
+    color="Payment Mode",
+    title="Sales by Payment Mode"
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# ---------------- YEARLY COMPARISON ----------------
+st.subheader("📊 Yearly Sales Comparison")
+
+yearly_sales = (
+    df.groupby(df["Order Date"].dt.year)["Sales"]
+    .sum()
+    .reset_index()
+)
+
+yearly_sales.columns = ["Year", "Sales"]
+
+fig = px.bar(
+    yearly_sales,
+    x="Year",
+    y="Sales",
+    color="Year",
+    title="Year-wise Sales"
+)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# ---------------- SALES PREDICTION ----------------
+st.subheader("🔮 Sales Prediction")
+
+forecast_data = (
+    df.groupby(df["Order Date"].dt.to_period("M"))["Sales"]
+    .sum()
+    .reset_index()
+)
+
+forecast_data["Month"] = (
+    forecast_data["Order Date"].dt.to_timestamp()
+)
+
+forecast_data["Month_Number"] = np.arange(
+    len(forecast_data)
+)
+
+X = forecast_data[["Month_Number"]]
+y = forecast_data["Sales"]
+
+model = LinearRegression()
+model.fit(X, y)
+
+future_months = np.arange(
+    len(forecast_data),
+    len(forecast_data) + 3
+).reshape(-1, 1)
+
+predictions = model.predict(future_months)
 
 future_dates = pd.date_range(
-    df["Date"].max() + pd.Timedelta(days=1),
-    periods=30,
-    freq="D"
+    start=forecast_data["Month"].max() + pd.offsets.MonthBegin(1),
+    periods=3,
+    freq="MS"
 )
 
-future_rows = []
+prediction_df = pd.DataFrame({
+    "Month": future_dates.strftime("%B %Y"),
+    "Predicted Sales": predictions
+})
 
-for platform in platforms:
-    for date in future_dates:
-        future_rows.append({
-            "Date": date,
-            "Platform": platform,
-            "Category": "Electronics"
-        })
+st.write("Predicted sales for the next 3 months:")
 
-future = pd.DataFrame(future_rows)
-
-future["Day"] = future["Date"].dt.day
-future["Month"] = future["Date"].dt.month
-future["DayOfWeek"] = future["Date"].dt.dayofweek
-future["DayOfYear"] = future["Date"].dt.dayofyear
-
-future_encoded = pd.get_dummies(
-    future, columns=["Platform", "Category"], dtype=int
+st.dataframe(
+    prediction_df,
+    use_container_width=True
 )
 
-future_X = future_encoded.reindex(columns=features, fill_value=0)
+# ---------------- SALES RECORDS ----------------
+st.subheader("📋 Sales Records")
 
-future["Predicted_Revenue"] = np.maximum(
-    0, revenue_model.predict(future_X)
-).round(2)
-
-future["Predicted_Units"] = np.maximum(
-    0, units_model.predict(future_X)
-).round().astype(int)
-
-f1, f2 = st.columns(2)
-f1.metric("Predicted Revenue (30 days)", f"₹{future['Predicted_Revenue'].sum():,.2f}")
-f2.metric("Predicted Units (30 days)", f"{future['Predicted_Units'].sum():,}")
-
-st.dataframe(future, use_container_width=True)
-
-fig_future = px.line(
-    future,
-    x="Date",
-    y="Predicted_Revenue",
-    color="Platform",
-    title="Predicted Daily Revenue by Platform"
+st.dataframe(
+    filtered_df,
+    use_container_width=True
 )
-st.plotly_chart(fig_future, use_container_width=True)
 
-prediction_csv = future.to_csv(index=False).encode("utf-8")
+# ---------------- DOWNLOAD ----------------
+csv = filtered_df.to_csv(index=False).encode("utf-8")
 
 st.download_button(
-    "Download 30-Day Predictions",
-    data=prediction_csv,
-    file_name="simulated_30_day_predictions.csv",
+    label="⬇️ Download Filtered Sales Data",
+    data=csv,
+    file_name="filtered_sales_data.csv",
     mime="text/csv"
 )
 
-st.caption("Project developed for academic demonstration.")
+st.success("Dashboard loaded successfully!")
